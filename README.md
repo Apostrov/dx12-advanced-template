@@ -33,7 +33,7 @@ git submodule update --init --recursive
 4. Build VS solution with premake:
 
 ```sh
-premake5 vs2019
+premake5 vs2017
 ```
 
 ## Third-party tools and data

@@ -17,10 +17,12 @@
 #include <DirectXMath.h>
 
 #include <iostream>
+#include <chrono>
 
 #include <exception>
 
 using namespace Microsoft::WRL;
+using namespace std::chrono;
 
 namespace DX
 {
@@ -61,4 +63,12 @@ struct ColorVertex
 {
 	XMFLOAT3 position;
 	XMFLOAT4 color;
+};
+
+struct FullVertex
+{
+	XMFLOAT3 position;
+	XMFLOAT3 diffuse_color;
+	XMFLOAT3 normal;
+	XMFLOAT2 texcoord;
 };

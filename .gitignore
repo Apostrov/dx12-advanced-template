@@ -1,9 +1,12 @@
+premake5.exe
 .vs/
 .vscode/
 bin/
 obj/
 results/
+models/
 
 *.sln
 *.vcxproj
 *.vcxproj.user
+*.vcxproj.filters

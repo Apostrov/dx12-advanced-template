@@ -3,7 +3,7 @@ workspace "Advanced technics"
    language "C++"
    architecture "x64"
    systemversion "latest"
-   toolset "v142"
+   toolset "v141"
    optimize "Speed"
    links { "d3d12", "dxgi", "d3dcompiler" }
    filter("configurations:Debug")
