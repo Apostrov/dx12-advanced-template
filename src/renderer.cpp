@@ -67,12 +67,18 @@ void Renderer::OnKeyDown(UINT8 key)
 		if (max_draw_call_num > 0)
 		{
 			max_draw_call_num--;
+			std::wstring msg = L"Number of draw call: " + std::to_wstring(max_draw_call_num) + L"\n";
+			//OutputDebugString(msg.c_str());
 		}
+		break;
 	case VK_OEM_PLUS:
 		if (max_draw_call_num < model_loader.GetMaterialNum())
 		{
 			max_draw_call_num++;
+			std::wstring msg = L"Number of draw call: " + std::to_wstring(max_draw_call_num) + L"\n";
+			//OutputDebugString(msg.c_str());
 		}
+		break;
 	default:
 		break;
 	}
@@ -150,6 +156,14 @@ void Renderer::LoadPipeline()
 
 	frame_index = swap_chain->GetCurrentBackBufferIndex();
 
+	// Load Model
+	std::wstring obj_file = GetBinPath(model_file);
+	std::string obj_path(obj_file.begin(), obj_file.end());
+
+	ThrowIfFailed(model_loader.LoadModel(obj_path));
+	max_draw_call_num = model_loader.GetMaterialNum();
+	per_mateial_srv_heap_offset.resize(model_loader.GetMaterialNum());
+
 	// Create descriptor heap for render target view
 
 	D3D12_DESCRIPTOR_HEAP_DESC rtv_heap_descriptor = {};
@@ -166,7 +180,7 @@ void Renderer::LoadPipeline()
 	ThrowIfFailed(device->CreateDescriptorHeap(&dsv_heap_descriptor, IID_PPV_ARGS(&dsv_heap)));
 
 	D3D12_DESCRIPTOR_HEAP_DESC cbv_src_heap_descriptor = {};
-	cbv_src_heap_descriptor.NumDescriptors = 1 + 1; // CBV + SRV
+	cbv_src_heap_descriptor.NumDescriptors = 2 + model_loader.GetTextureNum(); // CBV + empty SRV + n SRV
 	cbv_src_heap_descriptor.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 	cbv_src_heap_descriptor.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	ThrowIfFailed(device->CreateDescriptorHeap(&cbv_src_heap_descriptor, IID_PPV_ARGS(&cbv_srv_heap)));
@@ -217,8 +231,13 @@ void Renderer::LoadAssets()
 
 	ComPtr<ID3DBlob> signature;
 	ComPtr<ID3DBlob> error;
-	ThrowIfFailed(D3DX12SerializeVersionedRootSignature(&root_signature_descriptor,
-		rs_feature_data.HighestVersion, &signature, &error));
+	HRESULT res = D3DX12SerializeVersionedRootSignature(&root_signature_descriptor,
+		rs_feature_data.HighestVersion, &signature, &error);
+	if (error)
+	{
+		OutputDebugStringA((char *)error->GetBufferPointer());
+	}
+	ThrowIfFailed(res);
 	ThrowIfFailed(device->CreateRootSignature(0, signature->GetBufferPointer(),
 		signature->GetBufferSize(), IID_PPV_ARGS(&root_signature)));
 
@@ -234,10 +253,21 @@ void Renderer::LoadAssets()
 
 
 	std::wstring shader_path = GetBinPath(std::wstring(L"shaders.hlsl"));
-	ThrowIfFailed(D3DCompileFromFile(shader_path.c_str(), nullptr, nullptr,
-		"VSMain", "vs_5_0", compile_flags, 0, &vertex_shader, &error));
-	ThrowIfFailed(D3DCompileFromFile(shader_path.c_str(), nullptr, nullptr,
-		"PSMain", "ps_5_0", compile_flags, 0, &pixel_shader, &error));
+	HRESULT vertex = D3DCompileFromFile(shader_path.c_str(), nullptr, nullptr,
+		"VSMain", "vs_5_0", compile_flags, 0, &vertex_shader, &error);
+	if (error)
+	{
+		OutputDebugStringA((char *)error->GetBufferPointer());
+	}
+	ThrowIfFailed(vertex);
+
+	HRESULT pixel = D3DCompileFromFile(shader_path.c_str(), nullptr, nullptr,
+		"PSMain", "ps_5_0", compile_flags, 0, &pixel_shader, &error);
+	if (error)
+	{
+		OutputDebugStringA((char *)error->GetBufferPointer());
+	}
+	ThrowIfFailed(pixel);
 
 	D3D12_INPUT_ELEMENT_DESC input_element_descriptors[] =
 	{
@@ -317,11 +347,6 @@ void Renderer::LoadAssets()
 	device->CreateDepthStencilView(depth_stencil.Get(), nullptr, dsv_heap->GetCPUDescriptorHandleForHeapStart());
 
 	// Create and upload vertex buffer
-	std::wstring obj_file = GetBinPath(model_file);
-	std::string obj_path(obj_file.begin(), obj_file.end());
-
-	ThrowIfFailed(model_loader.LoadModel(obj_path));
-	max_draw_call_num = model_loader.GetMaterialNum();
 
 	ThrowIfFailed(device->CreateCommittedResource(
 		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
@@ -404,22 +429,43 @@ void Renderer::LoadAssets()
 		nullptr,
 		IID_PPV_ARGS(&constant_buffer)));
 
-	D3D12_CONSTANT_BUFFER_VIEW_DESC cbv_descriptor = {};
-	cbv_descriptor.BufferLocation = constant_buffer->GetGPUVirtualAddress();
-	cbv_descriptor.SizeInBytes = (sizeof(world_view_projection) + 255) & ~255;
 	CD3DX12_CPU_DESCRIPTOR_HANDLE cbv_srv_heap_handle(cbv_srv_heap->GetCPUDescriptorHandleForHeapStart());
 	const UINT cbv_srv_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
+	D3D12_CONSTANT_BUFFER_VIEW_DESC cbv_descriptor = {};
+	cbv_descriptor.BufferLocation = constant_buffer->GetGPUVirtualAddress();
+	cbv_descriptor.SizeInBytes = (sizeof(world_view_projection) + 255) & ~255;
+	cbv_srv_heap_handle.InitOffsetted(cbv_srv_heap->GetCPUDescriptorHandleForHeapStart(), 0, cbv_srv_descriptor_size);
+	
 	device->CreateConstantBufferView(&cbv_descriptor, cbv_srv_heap_handle);
-	cbv_srv_heap_handle.Offset(1, cbv_srv_descriptor_size);
 
 	CD3DX12_RANGE read_range(0, 0); 
 	ThrowIfFailed(constant_buffer->Map(0, &read_range, reinterpret_cast<void**>(&constant_buffer_data_begin)));
 	memcpy(constant_buffer_data_begin, &world_view_projection, sizeof(world_view_projection));
 
-	// Create texture
+	// Create empty SRV
 	{
-		std::string tex_file = "A:\\Projects\\dx12-advanced-template\\models\\default.png";
+		D3D12_SHADER_RESOURCE_VIEW_DESC empty_srv_descriptor = {};
+		empty_srv_descriptor.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		empty_srv_descriptor.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		empty_srv_descriptor.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		empty_srv_descriptor.Texture2D.MipLevels = 1;
+		empty_srv_descriptor.Texture2D.MostDetailedMip = 0;
+		empty_srv_descriptor.Texture2D.ResourceMinLODClamp = 0.0f;
+
+		cbv_srv_heap_handle.InitOffsetted(cbv_srv_heap->GetCPUDescriptorHandleForHeapStart(), 1, cbv_srv_descriptor_size);
+		device->CreateShaderResourceView(nullptr, &empty_srv_descriptor, cbv_srv_heap_handle);
+	}
+	// Create texture
+	UINT heap_index = 2;
+	for (UINT material_id = 0; material_id < model_loader.GetMaterialNum(); material_id++)
+	{
+		if (!model_loader.HasTexture(material_id))
+		{
+			per_mateial_srv_heap_offset[material_id] = 1;
+			continue;
+		}
+		std::string tex_file = model_loader.GetTexturePath(material_id);
 		int tex_width, tex_height, tex_channels;
 		unsigned char* image = stbi_load(
 			tex_file.c_str(),
@@ -440,6 +486,8 @@ void Renderer::LoadAssets()
 		texture_descriptor.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 		texture_descriptor.Flags = D3D12_RESOURCE_FLAG_NONE;
 
+		ComPtr<ID3D12Resource> texture;
+
 		ThrowIfFailed(device->CreateCommittedResource(
 			&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
 			D3D12_HEAP_FLAG_NONE,
@@ -449,6 +497,8 @@ void Renderer::LoadAssets()
 			IID_PPV_ARGS(&texture)));
 
 		texture->SetName(L"Texture");
+
+		ComPtr<ID3D12Resource> upload_texture;
 
 		const UINT64 upload_buffer_size = GetRequiredIntermediateSize(texture.Get(), 0, 1);
 
@@ -479,7 +529,13 @@ void Renderer::LoadAssets()
 		srv_descriptor.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srv_descriptor.Texture2D.MipLevels = 1;
 
+		cbv_srv_heap_handle.InitOffsetted(cbv_srv_heap->GetCPUDescriptorHandleForHeapStart(), heap_index, cbv_srv_descriptor_size);
 		device->CreateShaderResourceView(texture.Get(), &srv_descriptor, cbv_srv_heap_handle);
+
+		per_mateial_srv_heap_offset[material_id] = heap_index;
+		heap_index++;
+		textures.push_back(texture);
+		upload_textures.push_back(upload_texture);
 	}
 
 	ThrowIfFailed(command_list->Close());
@@ -511,8 +567,6 @@ void Renderer::PopulateCommandList()
 	const UINT cbv_srv_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 	CD3DX12_GPU_DESCRIPTOR_HANDLE cbv_srv_handle(cbv_srv_heap->GetGPUDescriptorHandleForHeapStart());
 	command_list->SetGraphicsRootDescriptorTable(0, cbv_srv_handle);
-	cbv_srv_handle.Offset(1, cbv_srv_descriptor_size);
-	command_list->SetGraphicsRootDescriptorTable(1, cbv_srv_handle);
 	command_list->RSSetViewports(1, &view_port);
 	command_list->RSSetScissorRects(1, &scissor_rect);
 
@@ -534,8 +588,14 @@ void Renderer::PopulateCommandList()
 	command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	command_list->IASetVertexBuffers(0, 1, &vertex_buffer_view);
 	command_list->IASetIndexBuffer(&index_buffer_view);
-	for (UINT material_id = 0; material_id < model_loader.GetMaterialNum() && material_id < max_draw_call_num; material_id++)
+	for (UINT material_id = 0; 
+		material_id < model_loader.GetMaterialNum() && \
+		material_id < max_draw_call_num; 
+		material_id++)
 	{
+		UINT offset = per_mateial_srv_heap_offset[material_id];
+		cbv_srv_handle.InitOffsetted(cbv_srv_heap->GetGPUDescriptorHandleForHeapStart(), offset, cbv_srv_descriptor_size);
+		command_list->SetGraphicsRootDescriptorTable(1, cbv_srv_handle);
 		DrawCallParams params = model_loader.GetDrawCallParams(material_id);
 		command_list->DrawIndexedInstanced(params.index_num, 1, params.start_index, params.start_vertex, 0);
 	}

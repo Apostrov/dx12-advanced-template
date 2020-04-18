@@ -27,10 +27,13 @@ public:
 
 	const UINT GetMaterialNum() const;
 	const DrawCallParams GetDrawCallParams(UINT material_id) const;
-
+	const std::string GetTexturePath(UINT material_id) const;
+	const bool HasTexture(UINT material_id) const;
+	const UINT GetTextureNum() const;
 protected:
 	std::vector<FullVertex> verteces;
 	std::vector<UINT> indeces;
 	std::string model_dir;
 	std::vector<tinyobj::material_t> materials;
+	std::vector<DrawCallParams> per_material_draw_call_params;
 };

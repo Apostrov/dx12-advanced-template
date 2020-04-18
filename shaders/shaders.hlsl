@@ -27,5 +27,5 @@ PSInput VSMain(float4 position : POSITION, float4 diffuse : DIFFUSE, float4 norm
 
 float4 PSMain(PSInput input) : SV_TARGET
 {
-	return input.color * g_texture.Sample(g_sampler, input.uv);
+	return 0.5f * input.color + 0.5f * g_texture.Sample(g_sampler, input.uv);
 }
